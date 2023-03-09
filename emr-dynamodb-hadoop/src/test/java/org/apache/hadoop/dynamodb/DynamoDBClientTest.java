@@ -14,10 +14,16 @@
 package org.apache.hadoop.dynamodb;
 
 import static org.apache.hadoop.dynamodb.DynamoDBConstants.DEFAULT_MAX_ITEM_SIZE;
+import static org.mockito.Mockito.mock;
 
+import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
+import com.amazonaws.services.dynamodbv2.model.BatchWriteItemRequest;
 import com.amazonaws.services.dynamodbv2.model.BatchWriteItemResult;
+import com.amazonaws.services.dynamodbv2.model.Capacity;
+import com.amazonaws.services.dynamodbv2.model.ConsumedCapacity;
 import com.amazonaws.services.dynamodbv2.model.WriteRequest;
 import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
 import com.amazonaws.ClientConfiguration;
@@ -35,9 +41,13 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
+import org.mockito.Mock;
+import org.mockito.Mockito;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class DynamoDBClientTest {
 
@@ -49,6 +59,7 @@ public class DynamoDBClientTest {
   @Rule
   public ExpectedException expectedException = ExpectedException.none();
 
+  AmazonDynamoDBClient mockClient = mock(AmazonDynamoDBClient.class);
   Configuration conf = new Configuration();
   ClientConfiguration clientConf;
   DynamoDBClient client;
@@ -57,7 +68,7 @@ public class DynamoDBClientTest {
   public void setup() {
     conf.clear();
     clientConf = new ClientConfiguration();
-    client = new DynamoDBClient(conf);
+    client = new DynamoDBClient(mockClient, conf);
   }
 
   @Test
@@ -210,6 +221,36 @@ public class DynamoDBClientTest {
             new AttributeValue(Strings.repeat("a", (int) DEFAULT_MAX_ITEM_SIZE)));
 
     client.putBatch("dummyTable", item, 1, null, true);
+
+    for (Map.Entry<String, List<WriteRequest>> entry: client.getWriteBatchMap().entrySet()) {
+      for (WriteRequest req: entry.getValue()) {
+        Assert.assertNotNull(req.getDeleteRequest());
+        Assert.assertNull(req.getPutRequest());
+      }
+    }
+  }
+
+  @Test
+  public void testPutMultipleBatchDeletionModeSuccessful() throws Exception {
+    Map<String, AttributeValue> item = ImmutableMap.of("",
+            new AttributeValue(Strings.repeat("a", (int) DEFAULT_MAX_ITEM_SIZE)));
+
+    Mockito.when(mockClient.batchWriteItem(Mockito.<BatchWriteItemRequest>any())).thenAnswer(i -> {
+      BatchWriteItemResult result = new BatchWriteItemResult();
+      BatchWriteItemRequest request = (BatchWriteItemRequest) i.getArguments()[0];
+      result.setUnprocessedItems(request.getRequestItems());
+
+      ConsumedCapacity consumedCapacity = new ConsumedCapacity();
+      Capacity capacity  = new Capacity();
+      capacity.setCapacityUnits(100.0);
+      consumedCapacity.setTable(capacity);
+
+      result.setConsumedCapacity(ImmutableList.of(consumedCapacity));
+      return result;
+    });
+    for (int i = 0; i < 5; ++i) {
+      client.putBatch("dummyTable", item, 2, null, true);
+    }
 
     for (Map.Entry<String, List<WriteRequest>> entry: client.getWriteBatchMap().entrySet()) {
       for (WriteRequest req: entry.getValue()) {

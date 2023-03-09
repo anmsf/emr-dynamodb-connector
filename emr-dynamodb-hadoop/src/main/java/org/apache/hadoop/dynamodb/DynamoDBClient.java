@@ -105,8 +105,12 @@ public class DynamoDBClient {
 
   // For unit testing only
   public DynamoDBClient() {
-    dynamoDB = null;
-    config = null;
+    this((AmazonDynamoDBClient) null, null);
+  }
+
+  public DynamoDBClient(AmazonDynamoDBClient amazonDynamoDBClient, Configuration conf) {
+    dynamoDB = amazonDynamoDBClient;
+    config = conf;
     maxBatchSize = DEFAULT_MAX_BATCH_SIZE;
     maxItemByteSize = DEFAULT_MAX_ITEM_SIZE;
   }
@@ -279,6 +283,13 @@ public class DynamoDBClient {
     return keys;
   }
 
+  private static Map<String, AttributeValue> getItemFromRequest(WriteRequest request) {
+    if (request.getPutRequest() != null) {
+      return request.getPutRequest().getItem();
+    }
+    return request.getDeleteRequest().getKey();
+  }
+
   /**
    * @param roomNeeded number of bytes that writeBatch MUST make room for
    */
@@ -294,7 +305,7 @@ public class DynamoDBClient {
               UnsupportedEncodingException,
               InterruptedException {
             pauseExponentially(batchWriteRetries);
-            BatchWriteItemResult result = dynamoDB.batchWriteItem(batchWriteItemRequest);
+              BatchWriteItemResult result = dynamoDB.batchWriteItem(batchWriteItemRequest);
 
             Map<String, List<WriteRequest>> unprocessedItems = result.getUnprocessedItems();
             if (unprocessedItems == null || unprocessedItems.isEmpty()) {
@@ -308,8 +319,7 @@ public class DynamoDBClient {
 
                 int batchSizeBytes = 0;
                 for (WriteRequest request : unprocessedWriteRequests) {
-                  batchSizeBytes += DynamoDBUtil.getItemSizeBytes(
-                      request.getPutRequest().getItem());
+                  batchSizeBytes += DynamoDBUtil.getItemSizeBytes(getItemFromRequest(request));
                 }
 
                 long maxItemsPerBatch =
@@ -357,7 +367,7 @@ public class DynamoDBClient {
       String key = entry.getKey();
       List<WriteRequest> requests = entry.getValue();
       for (WriteRequest request : requests) {
-        writeBatchMapSizeBytes += DynamoDBUtil.getItemSizeBytes(request.getPutRequest().getItem());
+        writeBatchMapSizeBytes += DynamoDBUtil.getItemSizeBytes(getItemFromRequest(request));
       }
       writeBatchMap.put(key, requests);
     }
@@ -365,7 +375,7 @@ public class DynamoDBClient {
   }
 
   private DynamoDBFibonacciRetryer getRetryDriver() {
-    return new DynamoDBFibonacciRetryer(Duration.standardMinutes(DEFAULT_RETRY_DURATION));
+    return new DynamoDBFibonacciRetryer(Duration.standardSeconds(10));
   }
 
   private void pauseExponentially(int retries) throws InterruptedException {
